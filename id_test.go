@@ -1,6 +1,7 @@
 package sdulid_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -100,6 +101,10 @@ var _ = Describe("model id", func() {
 	})
 
 	It("should generate domain sql", func() {
-		Expect(sdulid.DomainSQL[testID]()).To(Equal("\n\t\tCREATE DOMAIN test_id AS bytea \n\t\tCHECK (\n\t\t\toctet_length(VALUE) = 16 AND \n\t\t\tget_byte(VALUE, 14) = 255 AND \n\t\t\tget_byte(VALUE, 15) = 255\n\t\t)"))
+		Expect(sdulid.CreateDomainSQL[testID]()).To(Equal("\n\t\tCREATE DOMAIN test_id AS bytea \n\t\tCHECK (\n\t\t\toctet_length(VALUE) = 16 AND \n\t\t\tget_byte(VALUE, 14) = 255 AND \n\t\t\tget_byte(VALUE, 15) = 255\n\t\t)"))
+	})
+
+	It("should generate generator sql", func() {
+		Expect(sdulid.CreateGeneratorSQL[testID]()).To(ContainSubstring(fmt.Sprintf(`(%d >> 8) & 255)`, math.MaxUint16)))
 	})
 })

@@ -163,9 +163,9 @@ func FromULID[T Kind](s string) (id ID[T], err error) {
 	return
 }
 
-// DomainSQL generates SQL for a PostgreSQL domain that constrains the ID
+// CreateDomainSQL generates SQL for a PostgreSQL domain that constrains the ID
 // by checking the length and the 2-byte suffix for the entity type.
-func DomainSQL[T Kind]() string {
+func CreateDomainSQL[T Kind]() string {
 	var kind T
 
 	return fmt.Sprintf(`
@@ -179,4 +179,45 @@ func DomainSQL[T Kind]() string {
 		kind.KindNumber()>>8,   //nolint:mnd
 		kind.KindNumber()&0xFF, //nolint:mnd
 	)
+}
+
+// CreateGeneratorSQL returns the SQL for creating a PostgreSQL function for generating ULIDs in binary (BYTEA) format.
+// The last two bytes of the ULID will be set to the KindNumber in big-endian format.
+func CreateGeneratorSQL[T Kind]() string {
+	var kind T
+	kindNumber := kind.KindNumber()
+
+	return fmt.Sprintf(`CREATE FUNCTION generate_%s_id()
+	RETURNS BYTEA
+	AS $$
+	DECLARE
+		timestamp  BYTEA = E'\\000\\000\\000\\000\\000\\000';
+		kind_bytes BYTEA = E'\\000\\000';
+		unix_time  BIGINT;
+		ulid       BYTEA;
+	BEGIN
+		-- Generate the 6-byte timestamp
+		unix_time = (EXTRACT(EPOCH FROM CLOCK_TIMESTAMP()) * 1000)::BIGINT;
+		timestamp = SET_BYTE(timestamp, 0, (unix_time >> 40)::BIT(8)::INTEGER);
+		timestamp = SET_BYTE(timestamp, 1, (unix_time >> 32)::BIT(8)::INTEGER);
+		timestamp = SET_BYTE(timestamp, 2, (unix_time >> 24)::BIT(8)::INTEGER);
+		timestamp = SET_BYTE(timestamp, 3, (unix_time >> 16)::BIT(8)::INTEGER);
+		timestamp = SET_BYTE(timestamp, 4, (unix_time >> 8)::BIT(8)::INTEGER);
+		timestamp = SET_BYTE(timestamp, 5, unix_time::BIT(8)::INTEGER);
+
+		-- Generate 10 random bytes for entropy
+		ulid = timestamp || gen_random_bytes(8);
+
+		-- Set the last two bytes to the KindNumber in big-endian format
+		kind_bytes = SET_BYTE(kind_bytes, 0, (%d >> 8) & 255);  -- High byte (big-endian)
+		kind_bytes = SET_BYTE(kind_bytes, 1, %d & 255);          -- Low byte (big-endian)
+
+		-- Concatenate the ULID with the big-endian KindNumber bytes
+		ulid = ulid || kind_bytes;
+
+		RETURN ulid;
+	END
+	$$
+	LANGUAGE plpgsql
+	VOLATILE;`, kind.KindIdent(), kindNumber, kindNumber)
 }
